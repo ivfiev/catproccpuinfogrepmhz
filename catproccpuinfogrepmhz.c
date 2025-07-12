@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <signal.h>
 #include <math.h>
+#include <sys/time.h>
 
 #define SAMPLES_PER_SEC 10
 #define SAMPLES_RING 50
@@ -188,12 +189,19 @@ void read_power_draw(int *fds, uint64_t *pkg0, uint64_t *pkg1, uint64_t *cpu0, u
 	}
 }
 
-float watts(float energy_unit, uint64_t unit0, uint64_t unit1) {
+float watts(float energy_unit, uint64_t elapsed_usec, uint64_t unit0, uint64_t unit1) {
 	if (unit0 == 0 || unit1 == 0) {
 		return 0;
 	}
 	uint64_t delta = unit0 - unit1;
-	return delta * energy_unit;
+	return delta * energy_unit / (elapsed_usec / 1000000.0);
+}
+
+uint64_t now_usec() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    uint64_t usec = (long long)tv.tv_sec * 1000000 + tv.tv_usec;
+    return usec;
 }
 
 int main(void) {
@@ -217,6 +225,7 @@ int main(void) {
 	int power_draw = init_power_draw(fds, &energy_unit, cpus);
 
 	for (;;) {
+		uint64_t start_usec = now_usec();
 		for (int i = 0; i < SAMPLES_PER_SEC; i++) {
 			read_clocks(clocks, indexes, cpus);
 			
@@ -229,11 +238,13 @@ int main(void) {
 			samples++;
 			usleep(1000000 / SAMPLES_PER_SEC);
 		}
+		uint64_t end_usec = now_usec();
+		uint64_t elapsed_usec = end_usec - start_usec;
 
 		read_power_draw(fds, &pkg0, &pkg1, cpu0, cpu1, cpus);
-		
+
 		printf("\e[1;1H\e[2J");
-		printf("core#\tnow\tmax(%d)\tavg(%d)\tmax(*)\tavg(*)\ttpd(%.1fw)\n", SAMPLES_RING, SAMPLES_RING, watts(energy_unit, pkg0, pkg1));
+		printf("core#\tnow\tmax(%d)\tavg(%d)\tmax(*)\tavg(*)\ttpd(%.1fw)\n", SAMPLES_RING, SAMPLES_RING, watts(energy_unit, elapsed_usec, pkg0, pkg1));
 
 		calc_ring_stats(ring, maxes_ring, avgs_ring, cpus);
 		
@@ -246,7 +257,7 @@ int main(void) {
 		}
 
 		for (int i = 0; i < cpus; i++) {
-			printf("%d\t%d\t%d\t%d\t%d\t%d\t%.1fw\t\t", i, clocks[i], maxes_ring[i], (int)avgs_ring[i], maxes[i], (int)avgs[i], watts(energy_unit, cpu0[i], cpu1[i]));
+			printf("%d\t%d\t%d\t%d\t%d\t%d\t%.1fw\t\t", i, clocks[i], maxes_ring[i], (int)avgs_ring[i], maxes[i], (int)avgs[i], watts(energy_unit, elapsed_usec, cpu0[i], cpu1[i]));
 
 			for (int j = 0; j < loads[i]; j++) {
 				putchar('*');
