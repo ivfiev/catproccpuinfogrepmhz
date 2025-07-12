@@ -190,7 +190,7 @@ void read_power_draw(int *fds, uint64_t *pkg0, uint64_t *pkg1, uint64_t *cpu0, u
 }
 
 float watts(float energy_unit, uint64_t elapsed_usec, uint64_t unit0, uint64_t unit1) {
-	if (unit0 == 0 || unit1 == 0) {
+	if (unit0 == 0 || unit1 == 0 || elapsed_usec == 0) {
 		return 0;
 	}
 	uint64_t delta = unit0 - unit1;
