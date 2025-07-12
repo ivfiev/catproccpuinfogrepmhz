@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,8 +7,13 @@
 #include <ctype.h>
 #include <signal.h>
 #include <math.h>
+
 #define SAMPLES_PER_SEC 10
 #define SAMPLES_RING 50
+
+#define OFFSET_POWER_UNIT 0xc0010299
+#define OFFSET_CORE_ENERGY 0xc001029a
+#define OFFSET_PACKAGE_ENERGY 0xc001029b
 
 int get_cpus(void) {
   char buf[1024];
@@ -144,18 +150,71 @@ void calc_loads(int min_freq, float avgs[], int loads[], int cpus) {
   }
 }
 
+int open_msr(int cpu) {
+	char str[32];
+	snprintf(str, sizeof(str), "/dev/cpu/%d/msr", cpu);
+	int fd = open(str, O_RDONLY);
+	return fd;
+}
+
+uint64_t read_msr(int fd, __off64_t offset) {
+	uint8_t buf[8];
+	int read = pread(fd, buf, sizeof(buf), offset);
+	if (read != 8) {
+		perror("could not read msr");
+	}
+	return *(uint64_t *)buf;
+}
+
+int init_power_draw(int *fds, float *energy_unit, int cpus) {
+	for (int i = 0; i < cpus; i++) {
+		int fd = open_msr(i);
+		if (fd < 0) {
+			return -1;
+		}
+		fds[i] = fd;
+	}
+	uint64_t unit = read_msr(fds[0], OFFSET_POWER_UNIT);
+	*energy_unit = 1.0 / (1 << ((unit >> 8) & 0x1F));
+	return 0;
+}
+
+void read_power_draw(int *fds, uint64_t *pkg0, uint64_t *pkg1, uint64_t *cpu0, uint64_t *cpu1, int cpus) {
+	*pkg1 = *pkg0;
+	*pkg0 = read_msr(fds[0], OFFSET_PACKAGE_ENERGY);
+	for (int i = 0; i < cpus; i++) {
+		cpu1[i] = cpu0[i];
+		cpu0[i] = read_msr(fds[i], OFFSET_CORE_ENERGY);
+	}
+}
+
+float watts(float energy_unit, uint64_t unit0, uint64_t unit1) {
+	if (unit0 == 0 || unit1 == 0) {
+		return 0;
+	}
+	uint64_t delta = unit0 - unit1;
+	return delta * energy_unit;
+}
+
 int main(void) {
   handle_sigint();
   int cpus = get_cpus(), samples = 0;
   int indexes[cpus], clocks[cpus], maxes[cpus], maxes_ring[cpus], ring[cpus][SAMPLES_RING], loads[cpus];
+	int fds[cpus];
   float avgs[cpus], avgs_ring[cpus];
+	uint64_t pkg0 = 0, pkg1 = 0;
+	uint64_t cpu0[cpus], cpu1[cpus];
+	float energy_unit;
   int min_avg_freq = 0xFFFF;
 
   memset(avgs, 0, cpus * sizeof(float));
   memset(maxes, 0, cpus * sizeof(int));
   memset(ring, 0, cpus * SAMPLES_RING * sizeof(int));
   memset(loads, 0, cpus * sizeof(int));
+	memset(cpu0, 0, cpus * sizeof(uint64_t));
+	memset(cpu1, 0, cpus * sizeof(uint64_t));
   index_cpuinfo(indexes, cpus);
+	int power_draw = init_power_draw(fds, &energy_unit, cpus);
 
   for (;;) {
     for (int i = 0; i < SAMPLES_PER_SEC; i++) {
@@ -172,9 +231,10 @@ int main(void) {
     }
 
     printf("\e[1;1H\e[2J");
-    printf("core#\tnow\tmax(%d)\tavg(%d)\tmax(*)\tavg(*)\tload(50)\n", SAMPLES_RING, SAMPLES_RING);
+    printf("core#\tnow\tmax(%d)\tavg(%d)\tmax(*)\tavg(*)\ttpd(%.1fw)\n", SAMPLES_RING, SAMPLES_RING, watts(energy_unit, pkg0, pkg1));
 
     calc_ring_stats(ring, maxes_ring, avgs_ring, cpus);
+		read_power_draw(fds, &pkg0, &pkg1, cpu0, cpu1, cpus);
     
     if (samples >= SAMPLES_RING) {
       for (int i = 0; i < cpus; i++) {
@@ -185,7 +245,7 @@ int main(void) {
     }
 
     for (int i = 0; i < cpus; i++) {
-      printf("%d\t%d\t%d\t%d\t%d\t%d\t", i, clocks[i], maxes_ring[i], (int)avgs_ring[i], maxes[i], (int)avgs[i]);
+      printf("%d\t%d\t%d\t%d\t%d\t%d\t%.1fw\t\t", i, clocks[i], maxes_ring[i], (int)avgs_ring[i], maxes[i], (int)avgs[i], watts(energy_unit, cpu0[i], cpu1[i]));
 
       for (int j = 0; j < loads[i]; j++) {
         putchar('*');
