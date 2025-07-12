@@ -230,11 +230,12 @@ int main(void) {
 			usleep(1000000 / SAMPLES_PER_SEC);
 		}
 
+		read_power_draw(fds, &pkg0, &pkg1, cpu0, cpu1, cpus);
+		
 		printf("\e[1;1H\e[2J");
 		printf("core#\tnow\tmax(%d)\tavg(%d)\tmax(*)\tavg(*)\ttpd(%.1fw)\n", SAMPLES_RING, SAMPLES_RING, watts(energy_unit, pkg0, pkg1));
 
 		calc_ring_stats(ring, maxes_ring, avgs_ring, cpus);
-		read_power_draw(fds, &pkg0, &pkg1, cpu0, cpu1, cpus);
 		
 		if (samples >= SAMPLES_RING) {
 			for (int i = 0; i < cpus; i++) {
