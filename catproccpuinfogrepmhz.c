@@ -163,6 +163,7 @@ uint64_t read_msr(int fd, __off64_t offset) {
 	int read = pread(fd, buf, sizeof(buf), offset);
 	if (read != 8) {
 		perror("could not read msr");
+		exit(1);
 	}
 	return *(uint64_t *)buf;
 }
@@ -222,7 +223,7 @@ int main(void) {
 	memset(cpu0, 0, cpus * sizeof(uint64_t));
 	memset(cpu1, 0, cpus * sizeof(uint64_t));
 	index_cpuinfo(indexes, cpus);
-	int power_draw = init_power_draw(fds, &energy_unit, cpus);
+	int power_draw_status = init_power_draw(fds, &energy_unit, cpus);
 
 	for (;;) {
 		uint64_t start_usec = now_usec();
@@ -241,7 +242,9 @@ int main(void) {
 		uint64_t end_usec = now_usec();
 		uint64_t elapsed_usec = end_usec - start_usec;
 
-		read_power_draw(fds, &pkg0, &pkg1, cpu0, cpu1, cpus);
+		if (power_draw_status == 0) {
+			read_power_draw(fds, &pkg0, &pkg1, cpu0, cpu1, cpus);
+		}
 
 		printf("\e[1;1H\e[2J");
 		printf("core#\tnow\tmax(%d)\tavg(%d)\tmax(*)\tavg(*)\ttpd(%.1fw)\n", SAMPLES_RING, SAMPLES_RING, watts(energy_unit, elapsed_usec, pkg0, pkg1));
